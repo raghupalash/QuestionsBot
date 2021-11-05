@@ -1,51 +1,21 @@
-from telegram import Update, Message, ParseMode, InlineKeyboardButton, InlineKeyboardMarkup
+# We are going to use this file for main bot logic and holding data.
+# For sending messages and storing data, we will use utils.py
+from telegram import Update, Message, ParseMode, ReplyKeyboardMarkup
 from telegram.ext import (
     Updater, 
     CommandHandler, 
     ConversationHandler,
+    MessageHandler,
     CallbackQueryHandler, 
     CallbackContext,
+    Filters,
 )
 from openpyxl import load_workbook
+from utils import show_sheets, show_groups, open_workbook
 
-ADMIN_ID = "1107423707"
-
-def start(update: Update, context: CallbackContext):
-    # Allow only admin
-    if update.message.from_user.id != ADMIN_ID:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, I'm not allowed to talk to you!")
-        return
-    # Load worksheet
-    try:
-        wb = load_workbook(f"custom/file{update.effective_chat.id}.xlsx")
-    except:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Send a sheet with links first!")
-        return
-    show_sheets(wb, update, context)
-    
-def show_sheets(wb, update, context):
-    keyboard = []
-    for sheet in wb.worksheets:
-        keyboard.append(InlineKeyboardButton(sheet.title, callback_data=f"sheet_{sheet.title}"))
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    context.bot.send_message(
-        chat_id=update.effective_chat.id, 
-        text="These are your sheets:",
-        reply_markup=reply_markup,
-    )
-    return
-
-def show_groups():
-    groups = ["group a", "group b", "group c"]
-    keyboard = []
-    for i, group in enumerate(groups):
-        keyboard.append(InlineKeyboardButton(f"{i}. {group}", callback_data=f"group_{group}"))
-    context.bot.send_message(chat_id=udpate.effective_chat..id, )
-
-def groups(update: Update, context: CallbackContext):
-
-    
-
+ADMIN_ID = 1107423707
+  
+ONE, TWO = range(2)
 def incoming_document(update, context):
     file_type = update.message.document.mime_type
     if file_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
@@ -66,16 +36,58 @@ def incoming_document(update, context):
         context.bot.send_message(chat_id=update.effective_chat.id,
             text="Only ms office spreadsheet allowed with extension '.xlsx'")
 
+def start(update: Update, context:CallbackContext):
+    # Allow only admin
+    if update.message.from_user.id != ADMIN_ID:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, I'm not allowed to talk to you!")
+        return ConversationHandler.END
+    # Load worksheet
+    wb = open_workbook(update, context)
+    if not wb:
+        return ConversationHandler.END
+    show_sheets(wb, update, context)
+    return ONE
+
+def groups(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+
+    data = query.data.split("_")
+    if data[0] == "sheet":
+        context.user_data["sheet"] = data[1]
+        context.user_data["groups"] = []
+    elif data[0] == "group":
+        # Avoid repeatition while adding into list
+        if data[1] not in context.user_data.get("groups"):
+            context.user_data["groups"].append(data[1])
+    else:
+        # User pressed "done"
+        query.edit_message_text(text="Write the date (in DD-MM-YYYY format):") # Not a good design
+        return TWO
+
+    # wb = open_workbook(update, context)
+    # if not wb:
+    #     return ConversationHandler.END
+    show_groups(query, context)
+
+def cancel():
+    ConversationHandler.END
+
 def main():
-    updater = Updater(token="1982910780:AAGdFTAqcud7pC1p7zZdcVtxh-UgO177-xM")
+    updater = Updater(token="2042937645:AAFnQDvY7UrVNxhW8J0eRsC7ZTctWQ8M6Ds")
 
     dispatcher = updater.dispatcher
 
-    start_handler = CommandHandler('start', start)
-    dispatcher.add_handler(MessageHandler(Filters.document, incoming_document))
+    start_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            ONE: [CallbackQueryHandler(groups)],
+        },
+        fallbacks={CommandHandler("cancel", cancel)}
+    )
 
+    dispatcher.add_handler(MessageHandler(Filters.document, incoming_document))
     dispatcher.add_handler(start_handler)
-    dispatcher.add_handler(button_handler)
 
     updater.start_polling()
 
