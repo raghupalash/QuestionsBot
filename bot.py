@@ -92,6 +92,26 @@ def schedule_time(update: Update, context: CallbackContext):
     save_data(update, context)
     return ConversationHandler.END
 
+def add_group(update: Update, context: CallbackContext):
+    if update.message.from_user.id != ADMIN_ID:
+        update.message.reply_text("Sorry, only the bot owner can add the bot in the database.")
+        return
+    # Save group info
+    group_title = update.message.chat.title
+    group_id = update.message.chat.id
+    wb = open_workbook(update, context)
+    if not wb:
+        return
+    sheet = wb["Groups"]
+    for item in sheet['B']:
+        if item.value == group_id:
+            update.message.reply_text("The group is already in the database")
+            return
+    data = [group_title, group_id]
+    sheet.append(data)
+    wb.save(filename="custom/excel_sheet.xlsx")
+    update.message.reply_text("Group added to the database.")
+
 def cancel():
     ConversationHandler.END
 
@@ -111,6 +131,7 @@ def main():
     )
 
     dispatcher.add_handler(MessageHandler(Filters.document, incoming_document))
+    dispatcher.add_handler(CommandHandler('add', add_group))
     dispatcher.add_handler(start_handler)
 
     updater.start_polling()

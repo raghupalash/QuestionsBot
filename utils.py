@@ -85,10 +85,7 @@ def save_data(update, context):
     # Update workbook
     wb = open_workbook(update, context)
     if not wb:
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Oops! Something went wrong while opening the sheet, send me the sheet again and try once more!"
-        )
+        return
     if fill_database(wb, context):
         context.bot.send_message(chat_id=update.effective_chat.id, text="Data updated!")
     else:
