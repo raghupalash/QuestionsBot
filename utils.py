@@ -1,5 +1,6 @@
 from openpyxl import load_workbook
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+import datetime
 
 def open_workbook(update, context):
     try:
@@ -12,7 +13,8 @@ def open_workbook(update, context):
 def show_sheets(wb, update, context):
     keyboard = []
     for sheet in wb.worksheets:
-        keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
+        if sheet.title not in ["Schedule", "Groups"]:
+            keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(
         chat_id=update.effective_chat.id, 
@@ -40,3 +42,54 @@ def show_groups(query, context):
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN
     )
+
+def validate_date(update, context):
+    text = update.message.text
+    date = [int(x) for x in text.split("-")]
+    # An error might occur while running questions if the date has been set in the past
+    try:
+        datetime.datetime(date[0], date[1], date[2])
+    except:
+        update.message.reply_text("Wrong format, use YYYY-MM-DD instead.")
+        return None
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Write a time (in HH:MM:SS format):"
+    )
+    return text
+
+def validate_time(update, context):
+    text = update.message.text
+    timeformat = "%H:%M:%S"
+    try:
+        # Check if 0 problem happens here!
+        datetime.datetime.strptime(text, timeformat)
+    except:
+        update.message.reply_text("Wrong format, use HH:MM:SS instead.")
+        return None
+    return text
+
+def fill_database(wb, context):
+    sheet = wb["Schedule"]
+    data = [
+        context.user_data["sheet"],
+        ", ".join(context.user_data["groups"]),
+        context.user_data["date"],
+        context.user_data["time"]
+    ]
+    sheet.append(data)
+    wb.save(filename="custom/excel_sheet.xlsx")
+    return wb
+
+def save_data(update, context):
+    # Update workbook
+    wb = open_workbook(update, context)
+    if not wb:
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Oops! Something went wrong while opening the sheet, send me the sheet again and try once more!"
+        )
+    if fill_database(wb, context):
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Data updated!")
+    else:
+        context.bot.send_message("Oops, something went wrong, try again!")

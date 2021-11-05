@@ -10,12 +10,18 @@ from telegram.ext import (
     CallbackContext,
     Filters,
 )
+import logging
 from openpyxl import load_workbook
-from utils import show_sheets, show_groups, open_workbook
+from utils import show_sheets, show_groups, open_workbook, validate_date, validate_time, fill_database, save_data
+
+# Enable logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG
+)
 
 ADMIN_ID = 1107423707
   
-ONE, TWO = range(2)
+ONE, TWO, THREE = range(3)
 def incoming_document(update, context):
     file_type = update.message.document.mime_type
     if file_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
@@ -62,13 +68,29 @@ def groups(update: Update, context: CallbackContext):
             context.user_data["groups"].append(data[1])
     else:
         # User pressed "done"
-        query.edit_message_text(text="Write the date (in DD-MM-YYYY format):") # Not a good design
+        query.edit_message_text(text="Write the date (in YYYY-MM-DD format):") # Not a good design
         return TWO
 
     # wb = open_workbook(update, context)
     # if not wb:
     #     return ConversationHandler.END
     show_groups(query, context)
+    
+def schedule_date(update: Update, context: CallbackContext):
+    date = validate_date(update, context)
+    if not date:
+        return TWO
+    context.user_data["date"] = date
+    return THREE
+
+def schedule_time(update: Update, context: CallbackContext):
+    time = validate_time(update, context)
+    print(time)
+    if not time:
+        return THREE
+    context.user_data["time"] = time
+    save_data(update, context)
+    return ConversationHandler.END
 
 def cancel():
     ConversationHandler.END
@@ -82,6 +104,8 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             ONE: [CallbackQueryHandler(groups)],
+            TWO: [MessageHandler(Filters.text, schedule_date)],
+            THREE: [MessageHandler(Filters.text, schedule_time)],
         },
         fallbacks={CommandHandler("cancel", cancel)}
     )
