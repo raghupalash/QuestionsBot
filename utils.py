@@ -23,18 +23,21 @@ def show_sheets(wb, update, context):
     )
     return
 
-def show_groups(query, context):
+def show_groups(wb, query, context):
+    sheet = wb["Groups"]
+    group_list = [item.value for item in sheet["A"]]
     text = "Groups Selected:" + " "
-    group_list = context.user_data.get("groups")
-    if not len(group_list):
+    selected_groups = context.user_data.get("groups")
+    if not len(selected_groups):
         text += "**None**"
     else:
-        text += ", ".join([group for group in group_list])
-    groups = set(["group a", "group b", "group c"]).symmetric_difference(set(group_list))
+        text += ", ".join([group for group in selected_groups])
+    print(group_list)
+    groups = set(group_list).symmetric_difference(set(selected_groups))
     keyboard = []
     for group in groups:
         keyboard.append([InlineKeyboardButton(group, callback_data=f"group_{group}")])
-    if len(group_list):
+    if len(selected_groups):
         keyboard.append([InlineKeyboardButton("Done.", callback_data=f"done")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(

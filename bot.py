@@ -71,10 +71,10 @@ def groups(update: Update, context: CallbackContext):
         query.edit_message_text(text="Write the date (in YYYY-MM-DD format):") # Not a good design
         return TWO
 
-    # wb = open_workbook(update, context)
-    # if not wb:
-    #     return ConversationHandler.END
-    show_groups(query, context)
+    wb = open_workbook(update, context)
+    if not wb:
+        return ConversationHandler.END
+    show_groups(wb, query, context)
     
 def schedule_date(update: Update, context: CallbackContext):
     date = validate_date(update, context)
