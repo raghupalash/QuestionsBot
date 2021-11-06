@@ -100,9 +100,9 @@ def save_data(update, context):
     else:
         context.bot.send_message("Oops, something went wrong, try again!")
 
-def create_datetime(row):
-    date = [int(x) for x in row[2].value.split("-")]
-    time = [int(x) for x in row[3].value.split(":")]
+def create_datetime(row, date_index, time_index):
+    date = [int(x) for x in row[date_index].value.split("-")]
+    time = [int(x) for x in row[time_index].value.split(":")]
     date_time = pytz.timezone('Asia/Kolkata').localize(datetime.datetime(date[0], date[1], date[2], time[0], time[1], time[2]))
 
     return date_time
@@ -128,7 +128,7 @@ def check_admin(update, context):
 def extract_datetime(date_time):
     # tzinfo already set by telegram(I think)
     date = date_time.strftime("%Y-%m-%d")
-    time = date_time.strftime("%H-%M-%S")
+    time = date_time.strftime("%H:%M:%S")
 
     return (date, time)
 
@@ -137,13 +137,16 @@ def in_run_time(wb, date_time):
     # if after, return True, if before return False
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
-        if create_datetime(row) < date_time:
+        if create_datetime(row, 2, 3) < date_time:
             return True
-    # Updates are recieved before the job time, discard them
-    print("This is before the job!!!")
     return False
 
-def collect_garbage_schedules():
+def collect_garbage():
     # Collect garbage older schedules
     wb = load_workbook("custom/excel_sheet.xlsx")
+    schedule = wb["Schedule"]
+    for row in schedule.iter_rows():
+        if create_datetime(row, 2, 3) < datetime.datetime.now(pytz.timezone('Asia/Kolkata')):
+            schedule.delete_rows(row[0].row)
+    wb.save(filename="custom/excel_sheet.xlsx")
 

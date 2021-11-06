@@ -25,6 +25,7 @@ from utils import (
     send_message_to_ids,
     extract_datetime,
     in_run_time,
+    collect_garbage
 )
 from credentials import admin_id
 import time
@@ -144,7 +145,7 @@ def set_jobs(update: Update, context: CallbackContext):
         return
     sheet = open_workbook(update, context)["Schedule"]
     for row in sheet.iter_rows():
-        time = create_datetime(row)
+        time = create_datetime(row, 2, 3)
         context.job_queue.run_once(test, time, context=row[0].row)
     update.message.reply_text("Schedule set, the bot will run the jobs when time arrives!")
 
@@ -156,6 +157,7 @@ def test(context: CallbackContext):
     job = context.job
     bot = context.bot
     row_index = job.context
+    session_start = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
     wb = load_workbook("custom/excel_sheet.xlsx")
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
@@ -171,12 +173,58 @@ def test(context: CallbackContext):
             break
         print(row[1].value)
         send_message_to_ids(bot, group_ids, row[1].value)
-        time.sleep(int(row[2].value) * 5)
+        time.sleep(float(row[2].value) * 60)
     send_message_to_ids(bot, group_ids, message="test complete!")
+    # start is saved in schedule and end can be taken right now
+    chat_history = load_workbook("custom/chat_history.xlsx")
+    chat_history_sheet = chat_history.active
+    send_report(
+        schedule=schedule, 
+        chat_history=chat_history_sheet, 
+        questions=questions, 
+        group_ids=group_ids, 
+        session_start=session_start
+    )
+                    
     # Delete the schedule from the database
     schedule.delete_rows(row_index)
     wb.save(filename="custom/excel_sheet.xlsx")
 
+def send_report(schedule, chat_history, questions, group_ids, session_start):
+    # Makes and sends reports
+    '''
+        report = {
+            group_id: {
+                group_name: name,
+                session_datetime: datetime,
+                response:{
+                    user1: [question1, question2]
+                    user2: [question1]
+                }
+            }
+        }
+    '''
+    report = {}
+    for group_id in group_ids:
+        report[group_id] = {}
+        for row_history in chat_history.iter_rows():
+            if row_history[2].value == group_id:
+                print(2)
+                user_id = row_history[3].value
+                time_limit = session_start # Initialize time limit for questions
+                for row_question in questions.iter_rows(min_row=3):
+                    question = row_question[0].value
+                    print(session_start)
+                    print(create_datetime(row_history, 0, 1))
+                    time_limit += datetime.timedelta(minutes=row_question[2].value)
+                    print(time_limit)
+                    if session_start < create_datetime(row_history, 0, 1) <= time_limit:
+                        if report[group_id].get(user_id):
+                            report[group_id][user_id].append(question)
+                        else:
+                            report[group_id][user_id] = [question]
+                        break # Don't want to iterate through next questions
+    print(report)
 
 def handle_user_responses(update: Update, context:CallbackContext):
     if update.message.chat.type != "group":
@@ -199,7 +247,7 @@ def main():
     dispatcher = updater.dispatcher
 
     # Garbage collect older schedules
-    # collect_garbage_schedules()
+    collect_garbage()
 
     start_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
