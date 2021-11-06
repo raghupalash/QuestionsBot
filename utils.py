@@ -1,7 +1,10 @@
 from openpyxl import load_workbook
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from credentials import admin_id
 import datetime
 import pytz
+
+ADMIN_ID = admin_id
 
 def open_workbook(update, context):
     try:
@@ -14,7 +17,7 @@ def open_workbook(update, context):
 def show_sheets(wb, update, context):
     keyboard = []
     for sheet in wb.worksheets:
-        if sheet.title not in ["Schedule", "Groups"]:
+        if sheet.title not in ["Schedule", "Groups", "History"]:
             keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(
@@ -115,3 +118,32 @@ def group_ids_by_title(wb, titles):
 def send_message_to_ids(bot, ids, message):
     for id in ids:
         bot.send_message(chat_id=id, text=message)
+
+def check_admin(update, context):
+    if update.message.from_user.id != ADMIN_ID:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, I'm not allowed to talk to you!")
+        return False
+    return True
+
+def extract_datetime(date_time):
+    # tzinfo already set by telegram(I think)
+    date = date_time.strftime("%Y-%m-%d")
+    time = date_time.strftime("%H-%M-%S")
+
+    return (date, time)
+
+def in_run_time(wb, date_time):
+    # date+time should be after date, time in schedule(as schedule is deleted after completion)
+    # if after, return True, if before return False
+    schedule = wb["Schedule"]
+    for row in schedule.iter_rows():
+        if create_datetime(row) < date_time:
+            return True
+    # Updates are recieved before the job time, discard them
+    print("This is before the job!!!")
+    return False
+
+def collect_garbage_schedules():
+    # Collect garbage older schedules
+    wb = load_workbook("custom/excel_sheet.xlsx")
+

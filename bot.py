@@ -13,6 +13,7 @@ from telegram.ext import (
 import logging
 from openpyxl import load_workbook
 from utils import (
+    check_admin,
     show_sheets, 
     show_groups, 
     open_workbook, 
@@ -22,18 +23,26 @@ from utils import (
     create_datetime,
     group_ids_by_title,
     send_message_to_ids,
+    extract_datetime,
+    in_run_time,
 )
+from credentials import admin_id
 import time
+import datetime
+import pytz
 
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG
 )
 
-ADMIN_ID = 1107423707
+ADMIN_ID = admin_id
   
 ONE, TWO, THREE = range(3)
 def incoming_document(update, context):
+    if not check_admin(update, context):
+        ConversationHandler.END
+
     file_type = update.message.document.mime_type
     if file_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
         # writing to a custom file
@@ -54,10 +63,12 @@ def incoming_document(update, context):
             text="Only ms office spreadsheet allowed with extension '.xlsx'")
 
 def start(update: Update, context:CallbackContext):
+    # Allow only pms
+    if update.message.chat.type == "group":
+        return
     # Allow only admin
-    if update.message.from_user.id != ADMIN_ID:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, I'm not allowed to talk to you!")
-        return ConversationHandler.END
+    if not check_admin(update, context):
+        ConversationHandler.END
     # Load worksheet
     wb = open_workbook(update, context)
     if not wb:
@@ -127,10 +138,15 @@ def cancel():
     ConversationHandler.END
 
 def set_jobs(update: Update, context: CallbackContext):
+    if update.message.chat.type == "group":
+        return
+    if not check_admin(update, context):
+        return
     sheet = open_workbook(update, context)["Schedule"]
     for row in sheet.iter_rows():
         time = create_datetime(row)
         context.job_queue.run_once(test, time, context=row[0].row)
+    update.message.reply_text("Schedule set, the bot will run the jobs when time arrives!")
 
 def test(context: CallbackContext):
     # Runs the full list of questions according to time
@@ -155,17 +171,35 @@ def test(context: CallbackContext):
             break
         print(row[1].value)
         send_message_to_ids(bot, group_ids, row[1].value)
-        time.sleep(int(row[2].value) * 10)
+        time.sleep(int(row[2].value) * 5)
     send_message_to_ids(bot, group_ids, message="test complete!")
+    # Delete the schedule from the database
+    schedule.delete_rows(row_index)
+    wb.save(filename="custom/excel_sheet.xlsx")
+
 
 def handle_user_responses(update: Update, context:CallbackContext):
-    if update.message.chat.type == "group":
-        history = open_workbook(update, context)["history"]
+    if update.message.chat.type != "group":
+        return
+    wb = load_workbook("custom/excel_sheet.xlsx")
+    date_time = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+    if not in_run_time(wb, date_time):
+        return
+    wb = load_workbook("custom/chat_history.xlsx")
+    date, time = extract_datetime(date_time)
+    history = wb.active
+    group_id = update.message.chat.id
+    user_id = update.message.from_user.id
+    history.append([date, time, group_id, user_id])
+    wb.save(filename="custom/chat_history.xlsx")
 
 def main():
     updater = Updater(token="2042937645:AAFnQDvY7UrVNxhW8J0eRsC7ZTctWQ8M6Ds")
     
     dispatcher = updater.dispatcher
+
+    # Garbage collect older schedules
+    # collect_garbage_schedules()
 
     start_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -181,7 +215,7 @@ def main():
     dispatcher.add_handler(CommandHandler("add", add_group))
     dispatcher.add_handler(CommandHandler("set", set_jobs))
     dispatcher.add_handler(start_handler)
-    dispatcher.add_handler(Filters.text, handle_user_responses)
+    dispatcher.add_handler(MessageHandler(Filters.text, handle_user_responses))
 
     updater.start_polling()
 
