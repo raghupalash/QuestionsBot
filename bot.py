@@ -12,7 +12,18 @@ from telegram.ext import (
 )
 import logging
 from openpyxl import load_workbook
-from utils import show_sheets, show_groups, open_workbook, validate_date, validate_time, fill_database, save_data
+from utils import (
+    show_sheets, 
+    show_groups, 
+    open_workbook, 
+    validate_date, 
+    validate_time, 
+    save_data, 
+    create_datetime,
+    group_ids_by_title,
+    send_message_to_ids,
+)
+import time
 
 # Enable logging
 logging.basicConfig(
@@ -74,7 +85,7 @@ def groups(update: Update, context: CallbackContext):
     wb = open_workbook(update, context)
     if not wb:
         return ConversationHandler.END
-    show_groups(wb, query, context)
+    show_groups(wb, query, update, context)
     
 def schedule_date(update: Update, context: CallbackContext):
     date = validate_date(update, context)
@@ -115,9 +126,45 @@ def add_group(update: Update, context: CallbackContext):
 def cancel():
     ConversationHandler.END
 
+def set_jobs(update: Update, context: CallbackContext):
+    sheet = open_workbook(update, context)["Schedule"]
+    for row in sheet.iter_rows():
+        time = create_datetime(row)
+        context.job_queue.run_once(test, time, context=row[0].row)
+
+def test(context: CallbackContext):
+    # Runs the full list of questions according to time
+    # Then checks the history and sees who answered at the right times
+    # Makes a report and send it to the group admin
+    # Deletes the row from the sheet.
+    job = context.job
+    bot = context.bot
+    row_index = job.context
+    wb = load_workbook("custom/excel_sheet.xlsx")
+    schedule = wb["Schedule"]
+    for row in schedule.iter_rows():
+        if row[0].row == row_index:
+            questions_sheet_title = row[0].value
+            group_list = row[1].value.strip(", ")
+
+    questions = wb[questions_sheet_title]
+    group_ids = group_ids_by_title(wb, group_list)
+    # Send the question and sleep for the time limit
+    for row in questions.iter_rows(min_row=3):
+        if None in [row[1].value, row[2].value]:
+            break
+        print(row[1].value)
+        send_message_to_ids(bot, group_ids, row[1].value)
+        time.sleep(int(row[2].value) * 10)
+    send_message_to_ids(bot, group_ids, message="test complete!")
+
+def handle_user_responses(update: Update, context:CallbackContext):
+    if update.message.chat.type == "group":
+        history = open_workbook(update, context)["history"]
+
 def main():
     updater = Updater(token="2042937645:AAFnQDvY7UrVNxhW8J0eRsC7ZTctWQ8M6Ds")
-
+    
     dispatcher = updater.dispatcher
 
     start_handler = ConversationHandler(
@@ -131,8 +178,10 @@ def main():
     )
 
     dispatcher.add_handler(MessageHandler(Filters.document, incoming_document))
-    dispatcher.add_handler(CommandHandler('add', add_group))
+    dispatcher.add_handler(CommandHandler("add", add_group))
+    dispatcher.add_handler(CommandHandler("set", set_jobs))
     dispatcher.add_handler(start_handler)
+    dispatcher.add_handler(Filters.text, handle_user_responses)
 
     updater.start_polling()
 

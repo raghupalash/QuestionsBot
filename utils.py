@@ -1,6 +1,7 @@
 from openpyxl import load_workbook
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
 import datetime
+import pytz
 
 def open_workbook(update, context):
     try:
@@ -23,13 +24,13 @@ def show_sheets(wb, update, context):
     )
     return
 
-def show_groups(wb, query, context):
+def show_groups(wb, query, update, context):
     sheet = wb["Groups"]
     group_list = [item.value for item in sheet["A"]]
     text = "Groups Selected:" + " "
     selected_groups = context.user_data.get("groups")
     if not len(selected_groups):
-        text += "**None**"
+        text += "None"
     else:
         text += ", ".join([group for group in selected_groups])
     print(group_list)
@@ -42,13 +43,15 @@ def show_groups(wb, query, context):
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(
         text=text, 
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=reply_markup
     )
 
 def validate_date(update, context):
     text = update.message.text
-    date = [int(x) for x in text.split("-")]
+    try:
+        date = [int(x) for x in text.split("-")]
+    except:
+        update.message.reply_text("Invalid message!")
     # An error might occur while running questions if the date has been set in the past
     try:
         datetime.datetime(date[0], date[1], date[2])
@@ -93,3 +96,22 @@ def save_data(update, context):
         context.bot.send_message(chat_id=update.effective_chat.id, text="Data updated!")
     else:
         context.bot.send_message("Oops, something went wrong, try again!")
+
+def create_datetime(row):
+    date = [int(x) for x in row[2].value.split("-")]
+    time = [int(x) for x in row[3].value.split(":")]
+    date_time = pytz.timezone('Asia/Kolkata').localize(datetime.datetime(date[0], date[1], date[2], time[0], time[1], time[2]))
+
+    return date_time
+
+def group_ids_by_title(wb, titles):
+    sheet = wb["Groups"]
+    group_ids = []
+    for row in sheet.iter_rows():
+        if row[0].value in titles and row[1].value not in group_ids:
+            group_ids.append(row[1].value)
+    return group_ids
+
+def send_message_to_ids(bot, ids, message):
+    for id in ids:
+        bot.send_message(chat_id=id, text=message)
