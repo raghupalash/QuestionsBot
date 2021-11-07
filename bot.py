@@ -1,6 +1,6 @@
 # We are going to use this file for main bot logic and holding data.
 # For sending messages and storing data, we will use utils.py
-from telegram import Update, Message, ParseMode, ReplyKeyboardMarkup
+from telegram import Update, Message, ParseMode, ReplyKeyboardMarkup, ParseMode
 from telegram.ext import (
     Updater, 
     CommandHandler, 
@@ -25,7 +25,10 @@ from utils import (
     send_message_to_ids,
     extract_datetime,
     in_run_time,
-    collect_garbage
+    collect_garbage,
+    create_and_send_msg,
+    get_user_name,
+    get_group_name_by_id
 )
 from credentials import admin_id
 import time
@@ -34,7 +37,7 @@ import pytz
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
 ADMIN_ID = admin_id
@@ -108,7 +111,6 @@ def schedule_date(update: Update, context: CallbackContext):
 
 def schedule_time(update: Update, context: CallbackContext):
     time = validate_time(update, context)
-    print(time)
     if not time:
         return THREE
     context.user_data["time"] = time
@@ -116,6 +118,8 @@ def schedule_time(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 def add_group(update: Update, context: CallbackContext):
+    if update.message.chat.type == "private":
+        return
     if update.message.from_user.id != ADMIN_ID:
         update.message.reply_text("Sorry, only the bot owner can add the bot in the database.")
         return
@@ -179,52 +183,20 @@ def test(context: CallbackContext):
     chat_history = load_workbook("custom/chat_history.xlsx")
     chat_history_sheet = chat_history.active
     send_report(
-        schedule=schedule, 
+        wb=wb,
+        context=context,
         chat_history=chat_history_sheet, 
         questions=questions, 
         group_ids=group_ids, 
         session_start=session_start
     )
-                    
+
+    # Delete chat history
+    chat_history_sheet.delete_rows(1, chat_history_sheet.max_row)  
+    chat_history.save(filename="custom/chat_history.xlsx")   
     # Delete the schedule from the database
     schedule.delete_rows(row_index)
     wb.save(filename="custom/excel_sheet.xlsx")
-
-def send_report(schedule, chat_history, questions, group_ids, session_start):
-    # Makes and sends reports
-    '''
-        report = {
-            group_id: {
-                group_name: name,
-                session_datetime: datetime,
-                response:{
-                    user1: [question1, question2]
-                    user2: [question1]
-                }
-            }
-        }
-    '''
-    report = {}
-    for group_id in group_ids:
-        report[group_id] = {}
-        for row_history in chat_history.iter_rows():
-            if row_history[2].value == group_id:
-                print(2)
-                user_id = row_history[3].value
-                time_limit = session_start # Initialize time limit for questions
-                for row_question in questions.iter_rows(min_row=3):
-                    question = row_question[0].value
-                    print(session_start)
-                    print(create_datetime(row_history, 0, 1))
-                    time_limit += datetime.timedelta(minutes=row_question[2].value)
-                    print(time_limit)
-                    if session_start < create_datetime(row_history, 0, 1) <= time_limit:
-                        if report[group_id].get(user_id):
-                            report[group_id][user_id].append(question)
-                        else:
-                            report[group_id][user_id] = [question]
-                        break # Don't want to iterate through next questions
-    print(report)
 
 def handle_user_responses(update: Update, context:CallbackContext):
     if update.message.chat.type != "group":
@@ -247,7 +219,7 @@ def main():
     dispatcher = updater.dispatcher
 
     # Garbage collect older schedules
-    collect_garbage()
+    # collect_garbage()
 
     start_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],

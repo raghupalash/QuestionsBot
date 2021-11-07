@@ -150,3 +150,60 @@ def collect_garbage():
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
 
+def send_report(wb, context, chat_history, questions, group_ids, session_start):
+    # Makes and sends reports
+    report = {}
+    for group_id in group_ids:
+        report[group_id] = {}
+        for row_history in chat_history.iter_rows():
+            if row_history[2].value == group_id:
+                user_id = row_history[3].value
+                time_limit = session_start # Initialize time limit for questions
+                for row_question in questions.iter_rows(min_row=3):
+                    question = row_question[0].value
+                    response_time = create_datetime(row_history, 0, 1)
+                    report[group_id]["session_datetime"] = response_time
+                    if not report[group_id].get("response"):
+                        report[group_id]["response"] = {}
+                    time_limit += datetime.timedelta(minutes=row_question[2].value)
+                    if session_start < response_time <= time_limit:
+                        if report[group_id]["response"].get(user_id):
+                            report[group_id]["response"][user_id].append(question)
+                        else:
+                            report[group_id]["response"][user_id] = [question]
+                        break # Don't want to iterate through next questions
+    create_and_send_msg(wb,context, report)
+
+def create_and_send_msg(wb, context, report):
+    for group in report:
+        message = f"{get_group_name_by_id(wb, group)}\n"
+        date, time = extract_datetime(report[group]["session_datetime"])
+        message += f"{date} {time}\n\n"
+        for user in report[group]["response"]:
+            # user is user_id
+            message += f"{get_user_name(context, group, user)}: "
+            question_list = report[group]["response"][user]
+            message += ", ".join(set([str(x) for x in question_list])) + "\n"
+            
+        # group is group_id
+        admins = context.bot.get_chat_administrators(group)
+        # WRITE HTML WHILE SENDING
+        for admin in admins:
+            try:
+                context.bot.send_message(chat_id=admin.user.id, text=message, parse_mode=ParseMode.HTML)
+            except:
+                continue
+
+def get_user_name(context, group_id, user_id):
+    user = context.bot.get_chat_member(chat_id=group_id, user_id=user_id).user
+    first_name = user.first_name
+    last_name = user.last_name
+    if not user.last_name:
+        last_name = ""
+    return first_name + " " + last_name
+
+def get_group_name_by_id(wb, group_id):
+    # Takes group_sheet, can change if needed in future
+    for row in wb["Groups"].iter_rows():
+        if row[1].value == group_id:
+            return row[0].value
