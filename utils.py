@@ -1,5 +1,5 @@
 from openpyxl import load_workbook
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, message
 from credentials import admin_id
 import datetime
 import pytz
@@ -10,7 +10,8 @@ def open_workbook(update, context):
     try:
         wb = load_workbook(f"custom/excel_sheet.xlsx")
     except:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Send a sheet first!")
+        message = "Upload question spreadsheet file using /addsheet!"
+        context.bot.send_message(chat_id=update.effective_chat.id, text=message)
         return None
     return wb
 
@@ -22,7 +23,7 @@ def show_sheets(wb, update, context):
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text="These are your sheets:",
+        text="Choose the sheet you want to post questions from:",
         reply_markup=reply_markup,
     )
     return
@@ -30,7 +31,8 @@ def show_sheets(wb, update, context):
 def show_groups(wb, query, update, context):
     sheet = wb["Groups"]
     group_list = [item.value for item in sheet["A"]]
-    text = "Groups Selected:" + " "
+    text = "These are the telegram groups you administer. Choose the group you want to post questions to and then select DONE.\n\n"
+    text += "Groups Selected:" + " "
     selected_groups = context.user_data.get("groups")
     if not len(selected_groups):
         text += "None"
@@ -63,7 +65,7 @@ def validate_date(update, context):
         return None
     context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Write a time (in HH:MM:SS format):"
+        text="What time do you want to post the first question (in HH:MM:SS format)?"
     )
     return text
 
@@ -78,27 +80,57 @@ def validate_time(update, context):
         return None
     return text
 
-def fill_database(wb, context):
-    sheet = wb["Schedule"]
-    data = [
-        context.user_data["sheet"],
-        ", ".join(context.user_data["groups"]),
-        context.user_data["date"],
-        context.user_data["time"]
-    ]
-    sheet.append(data)
-    wb.save(filename="custom/excel_sheet.xlsx")
-    return wb
-
 def save_data(update, context):
     # Update workbook
-    wb = open_workbook(update, context)
-    if not wb:
+    wb_main = open_workbook(update, context)
+    if not wb_main:
         return
-    if fill_database(wb, context):
+    wb_attendance = load_workbook("custom/attendance_sheet.xlsx")
+    if fill_database(wb_main, wb_attendance, context):
         context.bot.send_message(chat_id=update.effective_chat.id, text="Data updated!")
     else:
         context.bot.send_message("Oops, something went wrong, try again!")
+
+def fill_database(wb_main, wb_attendance, context):
+    # Modify attendance sheet
+    group_with_column = add_attendance_columns(wb_attendance, context)
+    group_string = []
+    for item in group_with_column:
+        group_string.append(":".join(item))
+    group_string = ", ".join(group_string)
+    print(group_string)
+    schedule = wb_main["Schedule"]
+    data = [
+        context.user_data["sheet"],
+        group_string,
+        context.user_data["date"],
+        context.user_data["time"]
+    ]
+    schedule.append(data)
+    wb_main.save(filename="custom/excel_sheet.xlsx")
+    
+    return wb_main
+
+def add_attendance_columns(wb, context):
+    groups = context.user_data["groups"]
+    date = context.user_data["date"]
+    group_with_column = []
+    for group in groups:
+        ws = wb[group]
+        headings = ["Date", "Answered", "QA"]
+        max_column = ws.max_column
+        for i, heading in enumerate(headings, start=1):
+            ws.cell(row=1, column=max_column + i, value=heading)
+
+        # Add schedule's date in all rows.
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row=row, column=max_column + 1, value=date)
+        
+        group_with_column.append([group, str(max_column + 2)])
+
+    wb.save(filename="custom/attendance_sheet.xlsx")
+    return group_with_column
+        
 
 def create_datetime(row, date_index, time_index):
     date = [int(x) for x in row[date_index].value.split("-")]
@@ -107,7 +139,8 @@ def create_datetime(row, date_index, time_index):
 
     return date_time
 
-def group_ids_by_title(wb, titles):
+def group_ids_by_title(wb, group_list):
+    titles = [x.strip(":")[0] for x in group_list]
     sheet = wb["Groups"]
     group_ids = []
     for row in sheet.iter_rows():
@@ -117,7 +150,7 @@ def group_ids_by_title(wb, titles):
 
 def send_message_to_ids(bot, ids, message):
     for id in ids:
-        bot.send_message(chat_id=id, text=message)
+        bot.send_message(chat_id=id, text=f"<b>{message}</b>", parse_mode=ParseMode.HTML)
 
 def check_admin(update, context):
     if update.message.from_user.id != ADMIN_ID:
@@ -137,15 +170,22 @@ def in_run_time(wb, date_time):
     # if after, return True, if before return False
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
+        # Here we are working on the logic that schedules get deleted after they have been executed,
+        # so only time that is going to be less than current time is the time of a schedule that is currently running.
+        # Instead of bool, this function can return what schedule it's currently running.
         if create_datetime(row, 2, 3) < date_time:
-            return True
-    return False
+            return {"sheet":row[0], "groups":row[1], "date":row[2], "time":row[3]}
+    return None
 
 def collect_garbage():
     # Collect garbage older schedules
-    wb = load_workbook("custom/excel_sheet.xlsx")
+    try:
+        wb = load_workbook("custom/excel_sheet.xlsx")
+    except:
+        return
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
+        print(row[2].value)
         if create_datetime(row, 2, 3) < datetime.datetime.now(pytz.timezone('Asia/Kolkata')):
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
@@ -207,3 +247,8 @@ def get_group_name_by_id(wb, group_id):
     for row in wb["Groups"].iter_rows():
         if row[1].value == group_id:
             return row[0].value
+
+def get_question_number(question_sheet, question):
+    for row in question_sheet.iter_rows(min_col=3):
+        if row[1] == question:
+            return row[0]
