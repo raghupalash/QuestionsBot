@@ -38,7 +38,6 @@ def show_groups(wb, query, update, context):
         text += "None"
     else:
         text += ", ".join([group for group in selected_groups])
-    print(group_list)
     groups = set(group_list).symmetric_difference(set(selected_groups))
     keyboard = []
     for group in groups:
@@ -98,7 +97,6 @@ def fill_database(wb_main, wb_attendance, context):
     for item in group_with_column:
         group_string.append(":".join(item))
     group_string = ", ".join(group_string)
-    print(group_string)
     schedule = wb_main["Schedule"]
     data = [
         context.user_data["sheet"],
@@ -125,6 +123,7 @@ def add_attendance_columns(wb, context):
         # Add schedule's date in all rows.
         for row in range(2, ws.max_row + 1):
             ws.cell(row=row, column=max_column + 1, value=date)
+            ws.cell(row=row, column=max_column + 3, value="0")
         
         group_with_column.append([group, str(max_column + 2)])
 
@@ -140,7 +139,9 @@ def create_datetime(row, date_index, time_index):
     return date_time
 
 def group_ids_by_title(wb, group_list):
-    titles = [x.strip(":")[0] for x in group_list]
+    print(group_list)
+    titles = [x.split(":")[0] for x in group_list]
+    print(titles)
     sheet = wb["Groups"]
     group_ids = []
     for row in sheet.iter_rows():
@@ -169,13 +170,22 @@ def in_run_time(wb, date_time):
     # date+time should be after date, time in schedule(as schedule is deleted after completion)
     # if after, return True, if before return False
     schedule = wb["Schedule"]
+    schedule_list = []
     for row in schedule.iter_rows():
         # Here we are working on the logic that schedules get deleted after they have been executed,
         # so only time that is going to be less than current time is the time of a schedule that is currently running.
         # Instead of bool, this function can return what schedule it's currently running.
         if create_datetime(row, 2, 3) < date_time:
-            return {"sheet":row[0], "groups":row[1], "date":row[2], "time":row[3]}
-    return None
+            schedule_list.append(
+                {"sheet":row[0].value, "groups":row[1].value, "date":row[2].value, "time":row[3].value}
+            )
+    if len(schedule_list) == 1:
+        return schedule_list[0]
+    elif len(schedule_list) > 1:
+        print("you can't run two schedules at the same time!")
+        return None
+    else:
+        return None
 
 def collect_garbage():
     # Collect garbage older schedules
@@ -185,7 +195,6 @@ def collect_garbage():
         return
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
-        print(row[2].value)
         if create_datetime(row, 2, 3) < datetime.datetime.now(pytz.timezone('Asia/Kolkata')):
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
@@ -249,6 +258,6 @@ def get_group_name_by_id(wb, group_id):
             return row[0].value
 
 def get_question_number(question_sheet, question):
-    for row in question_sheet.iter_rows(min_col=3):
-        if row[1] == question:
-            return row[0]
+    for row in question_sheet.iter_rows(min_row=3):
+        if row[1].value == question:
+            return str(row[0].value)

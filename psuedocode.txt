@@ -1,9 +1,17 @@
 During a schedule, user presses reply button on an "included" question to answer it.
 
-When bot revieves the response, it will do the following - 
+When bot recieves the response, it will do the following - 
 - Check if it's during a schedule, if yes, then which schedule?
     - If no schedule returned, then don't go further.
 - First get the question sheet from the schedule then return the question number of the answered question.
 - In the attendance sheet, goes ahead and puts the questions in front of username.
 
 If unexpectedly closed, and garbage not collected, then our run_time logic can suffer.
+
+- handle_responses function is collecting the responses and adding them to the attendance sheet while the test is 
+running.
+    - Check the current group of response.
+    - Find the attendance sheet => group the test has been going on.
+    - we have to fill entries => answered(list of answers) and QA(count)
+    - Find which question has been answered.
+    - Find the columns to be filled => group[1].

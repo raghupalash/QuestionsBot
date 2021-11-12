@@ -1,13 +1,21 @@
 - Don't disturb the first three sheets in the excel file(Schedule, Groups, History)
-- Don't disturb the excel spreadsheet named "chat_history".
+
 - While the bot is running, don't open any excel sheets inside the custom directory.
+
 - To add the group to the bot's database, add the bot to the group and then use the command '/add'.
+
 - To make the bot register a job, you will have to run /set. So if you make a new schedule, it won't run
 unless you run /set. Also if you make a schedule and close the bot program, when you open the program again
 you will have to run /set so that bot can set the jobs it needs to run.
 
 - It should be noted that adding a new question or attendance sheet, is going to replace the previous sheet, 
 so that only one sheet will exist at a time in bot's database.
+
+- You can't run two tests at the exact same time. Also don't use /set command while a schedule is running.
+
+- Always keep a backup copy of your data, in case bot crashes and the database is corrupted.
+
+- Each user should have a username, otherwise logic will be affected.
 
 Process to make an executable - 
 1. Install latest version of python from here - https://www.python.org/downloads/ 

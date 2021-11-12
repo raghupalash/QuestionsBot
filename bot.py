@@ -203,6 +203,8 @@ def test(context: CallbackContext):
         if row[0].row == row_index:
             questions_sheet_title = row[0].value
             group_list = row[1].value.strip(", ")
+            if not isinstance(group_list, list):
+                group_list = [group_list]
 
     questions = wb[questions_sheet_title]
     group_ids = group_ids_by_title(wb, group_list)
@@ -216,14 +218,14 @@ def test(context: CallbackContext):
     send_message_to_ids(bot, group_ids, message="time's up!")
 
     # start is saved in schedule and end can be taken right now
-    send_report(
-        wb=wb,
-        context=context,
-        chat_history=chat_history_sheet, 
-        questions=questions, 
-        group_ids=group_ids, 
-        session_start=session_start
-    )
+    # send_report(
+    #     wb=wb,
+    #     context=context,
+    #     chat_history=chat_history_sheet, 
+    #     questions=questions, 
+    #     group_ids=group_ids, 
+    #     session_start=session_start
+    # )
 
     # Delete the schedule from the database
     schedule.delete_rows(row_index)
@@ -237,22 +239,47 @@ def handle_user_responses(update: Update, context:CallbackContext):
     if not reply_to:
         return
 
+    current_group = update.message.chat.title
     wb_main = load_workbook("custom/excel_sheet.xlsx")
+    wb_attendance = load_workbook("custom/attendance_sheet.xlsx")
+    attendance_sheet = wb_attendance[current_group]
+
     date_time = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
     schedule = in_run_time(wb_main, date_time)
     # Check if we currently are in a schedule
     if not schedule:
         return
-    
+
     question_sheet = wb_main[schedule["sheet"]]
     question_number = get_question_number(question_sheet, reply_to.text)
+    groups = group_and_report_column(schedule["groups"])
+    # This column will be affected in the group
+    column_answered = groups[current_group]
+    column_QA = column_answered + 1
 
     # Add these questions in attendance sheet.
     # Here we operate on the understanding that the schedule is deleted after it has been executed.
-    wb_attendance = load_workbook("custom/attendance_sheet")
+    for row in attendance_sheet.iter_rows(min_row=2):
+        if row[0].value == update.message.from_user.username:
+            stored = row[column_answered - 1].value # A string like 1, 2, 3, 4 or None
+            if not stored:
+                attendance_sheet.cell(row=row[0].row, column=column_answered, value=question_number)
+            else:
+                attendance_sheet.cell(row=row[0].row, column=column_answered, value=", ".join([str(stored), question_number]))
+            attendance_sheet.cell(row=row[0].row, column=column_QA, value=str(int(row[column_QA - 1].value) + 1))
 
-    # Find the username
+    wb_attendance.save(filename="custom/attendance_sheet.xlsx")
 
+
+def group_and_report_column(groups):
+    # Takes a list of groups combined with column to be edited and returns a dict.
+    if not isinstance(groups, list):
+        groups = [groups]
+    data = {}
+    for group in groups:
+        split = group.split(":")
+        data[split[0]] = int(split[1])
+    return data
 
 def main():
     updater = Updater(token=TOKEN)
