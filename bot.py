@@ -1,6 +1,6 @@
 # We are going to use this file for main bot logic and holding data.
 # For sending messages and storing data, we will use utils.py
-from telegram import Update, Message, ParseMode, ReplyKeyboardMarkup, ParseMode, message
+from telegram import Update
 from telegram.ext import (
     Updater, 
     CommandHandler, 
@@ -15,6 +15,8 @@ from openpyxl import load_workbook
 from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
 from telegram.inline.inlinekeyboardmarkup import InlineKeyboardMarkup
 from utils import (
+    TIMEZONE,
+    test,
     check_admin,
     show_sheets, 
     show_groups, 
@@ -30,18 +32,18 @@ from utils import (
     send_report,
     get_question_number
 )
-from credentials import admin_id, token
+from credentials import timezone
 import time
 import datetime
 import pytz
+from test_utlis import start_admin
 
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
-ADMIN_ID = admin_id
-TOKEN = token
+TIMEZONE = timezone
   
 ONE, TWO, THREE = range(3)
 
@@ -79,19 +81,12 @@ def incoming_document(update, context):
         with open(file_location, 'wb') as f:
             context.bot.get_file(update.message.document).download(out=f)
         
-        keyboard = [["/start"]]
-        reply_markup = ReplyKeyboardMarkup(
-            keyboard,
-            one_time_keyboard=False,
-            resize_keyboard=True,
-            input_field_placeholder="start"
-        )
         context.bot.send_message(chat_id=update.effective_chat.id, 
-            text="Sheet uploaded, press /start to view sheets from.", reply_markup=reply_markup)
+            text="Sheet uploaded, press /start to view sheets from.")
     else:
         context.bot.send_message(chat_id=update.effective_chat.id,
             text="Only ms office spreadsheet allowed with extension '.xlsx'")
-    ConversationHandler.END
+    return ConversationHandler.END
 
 def start(update: Update, context:CallbackContext):
     # Allow only pms
@@ -173,6 +168,7 @@ def add_group(update: Update, context: CallbackContext):
     sheet.append(data)
     wb.save(filename="custom/excel_sheet.xlsx")
     update.message.reply_text("Group added to the database.")
+    return ConversationHandler.END
 
 def cancel(update, context):
     ConversationHandler.END
@@ -185,51 +181,8 @@ def set_jobs(update: Update, context: CallbackContext):
     sheet = open_workbook(update, context)["Schedule"]
     for row in sheet.iter_rows():
         time = create_datetime(row, 2, 3)
-        context.job_queue.run_once(test, time, context=row[0].row)
+        context.job_queue.run_once(test, time, context=row[4].value, name=f"job{row[0].row}")
     update.message.reply_text("You are all set!!! The questions are scheduled to run at the date and time you have chosen.")
-
-def test(context: CallbackContext):
-    # Runs the full list of questions according to time
-    # Then checks the history and sees who answered at the right times
-    # Makes a report and send it to the group admin
-    # Deletes the row from the sheet.
-    job = context.job
-    bot = context.bot
-    row_index = job.context
-    session_start = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-    wb = load_workbook("custom/excel_sheet.xlsx")
-    schedule = wb["Schedule"]
-    for row in schedule.iter_rows():
-        if row[0].row == row_index:
-            questions_sheet_title = row[0].value
-            group_list = row[1].value.strip(", ")
-            if not isinstance(group_list, list):
-                group_list = [group_list]
-
-    questions = wb[questions_sheet_title]
-    group_ids = group_ids_by_title(wb, group_list)
-
-    # Send the question and sleep for the time limit
-    for row in questions.iter_rows(min_row=3):
-        if None in [row[1].value, row[2].value]:
-            break
-        send_message_to_ids(bot, group_ids, row[1].value)
-        time.sleep(float(row[2].value) * 60)
-    send_message_to_ids(bot, group_ids, message="time's up!")
-
-    # start is saved in schedule and end can be taken right now
-    # send_report(
-    #     wb=wb,
-    #     context=context,
-    #     chat_history=chat_history_sheet, 
-    #     questions=questions, 
-    #     group_ids=group_ids, 
-    #     session_start=session_start
-    # )
-
-    # Delete the schedule from the database
-    schedule.delete_rows(row_index)
-    wb.save(filename="custom/excel_sheet.xlsx")
 
 def handle_user_responses(update: Update, context:CallbackContext):
     if update.message.chat.type != "group":
@@ -244,7 +197,7 @@ def handle_user_responses(update: Update, context:CallbackContext):
     wb_attendance = load_workbook("custom/attendance_sheet.xlsx")
     attendance_sheet = wb_attendance[current_group]
 
-    date_time = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+    date_time = datetime.datetime.now(pytz.timezone(TIMEZONE))
     schedule = in_run_time(wb_main, date_time)
     # Check if we currently are in a schedule
     if not schedule:
@@ -252,6 +205,9 @@ def handle_user_responses(update: Update, context:CallbackContext):
 
     question_sheet = wb_main[schedule["sheet"]]
     question_number = get_question_number(question_sheet, reply_to.text)
+    if not question_number:
+        return
+
     groups = group_and_report_column(schedule["groups"])
     # This column will be affected in the group
     column_answered = groups[current_group]
@@ -281,8 +237,23 @@ def group_and_report_column(groups):
         data[split[0]] = int(split[1])
     return data
 
+def help(update, context):
+    message = (
+        "/start - Add a schedule.(pm only)\n"
+        "/addsheet - Add a sheet.(pm only)\n"
+        "/add - Add group to the database.(group chat only)\n"
+        "/set - Run this everytime you run the bot, and everytime you make a schedule " 
+        "this sets the schedules inside a job."
+    )
+    context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+
 def main():
-    updater = Updater(token=TOKEN)
+    wb_token = load_workbook("custom/token.xlsx")
+    token = wb_token.active["A1"].value
+    global ADMIN_ID
+    ADMIN_ID = wb_token.active["A2"].value
+
+    updater = Updater(token=token)
     
     dispatcher = updater.dispatcher
 
@@ -307,12 +278,14 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-
+    dispatcher.add_handler(CommandHandler("start_admin", start_admin))
     dispatcher.add_handler(document_handler)
     dispatcher.add_handler(CommandHandler("add", add_group))
     dispatcher.add_handler(CommandHandler("set", set_jobs))
+    dispatcher.add_handler(CommandHandler("help", help))
     dispatcher.add_handler(start_handler)
     dispatcher.add_handler(MessageHandler(Filters.text, handle_user_responses))
+    
 
     updater.start_polling()
 

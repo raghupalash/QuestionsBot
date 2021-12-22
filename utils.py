@@ -1,10 +1,13 @@
 from openpyxl import load_workbook
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, message
-from credentials import admin_id
+from telegram.ext import CallbackContext
+from credentials import timezone
 import datetime
 import pytz
+import time
 
-ADMIN_ID = admin_id
+ADMIN_ID = load_workbook("custom/token.xlsx").active["A2"].value
+TIMEZONE = timezone
 
 def open_workbook(update, context):
     try:
@@ -18,7 +21,7 @@ def open_workbook(update, context):
 def show_sheets(wb, update, context):
     keyboard = []
     for sheet in wb.worksheets:
-        if sheet.title not in ["Schedule", "Groups", "History"]:
+        if sheet.title not in ["Schedule", "Groups", "count"]:
             keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(
@@ -91,6 +94,9 @@ def save_data(update, context):
         context.bot.send_message("Oops, something went wrong, try again!")
 
 def fill_database(wb_main, wb_attendance, context):
+    job_count = wb_main["count"]["B1"].value + 1
+    wb_main["count"].cell(row=1, column=2, value=job_count)
+
     # Modify attendance sheet
     group_with_column = add_attendance_columns(wb_attendance, context)
     group_string = []
@@ -102,7 +108,8 @@ def fill_database(wb_main, wb_attendance, context):
         context.user_data["sheet"],
         group_string,
         context.user_data["date"],
-        context.user_data["time"]
+        context.user_data["time"],
+        job_count
     ]
     schedule.append(data)
     wb_main.save(filename="custom/excel_sheet.xlsx")
@@ -111,7 +118,14 @@ def fill_database(wb_main, wb_attendance, context):
 
 def add_attendance_columns(wb, context):
     groups = context.user_data["groups"]
-    date = context.user_data["date"]
+    raw_date = context.user_data["date"]
+    date_list = [int(x) for x in raw_date.split("-")]
+    date_object = datetime.datetime(date_list[0], date_list[1], date_list[2])
+    weekday = date_object.strftime("%A")[0:3]
+    month = f'{date_object.strftime("%B")[0:3]}.'
+    remaining = f"{date_object.day}/{date_object.year}"
+    date = " ".join([weekday, month, remaining])
+    
     group_with_column = []
     for group in groups:
         ws = wb[group]
@@ -134,14 +148,12 @@ def add_attendance_columns(wb, context):
 def create_datetime(row, date_index, time_index):
     date = [int(x) for x in row[date_index].value.split("-")]
     time = [int(x) for x in row[time_index].value.split(":")]
-    date_time = pytz.timezone('Asia/Kolkata').localize(datetime.datetime(date[0], date[1], date[2], time[0], time[1], time[2]))
+    date_time = pytz.timezone(TIMEZONE).localize(datetime.datetime(date[0], date[1], date[2], time[0], time[1], time[2]))
 
     return date_time
 
 def group_ids_by_title(wb, group_list):
-    print(group_list)
     titles = [x.split(":")[0] for x in group_list]
-    print(titles)
     sheet = wb["Groups"]
     group_ids = []
     for row in sheet.iter_rows():
@@ -195,7 +207,7 @@ def collect_garbage():
         return
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
-        if create_datetime(row, 2, 3) < datetime.datetime.now(pytz.timezone('Asia/Kolkata')):
+        if create_datetime(row, 2, 3) < datetime.datetime.now(pytz.timezone(TIMEZONE)):
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
 
@@ -259,5 +271,42 @@ def get_group_name_by_id(wb, group_id):
 
 def get_question_number(question_sheet, question):
     for row in question_sheet.iter_rows(min_row=3):
+        if row[0].value == 0:
+            continue
         if row[1].value == question:
             return str(row[0].value)
+
+def test(context: CallbackContext):
+    # Runs the full list of questions according to time
+    # Then checks the history and sees who answered at the right times
+    # Makes a report and send it to the group admin
+    # Deletes the row from the sheet.
+    job = context.job
+    bot = context.bot
+    job_index = job.context
+    session_start = datetime.datetime.now(pytz.timezone(TIMEZONE))
+    wb = load_workbook("custom/excel_sheet.xlsx")
+    schedule = wb["Schedule"]
+    for row in schedule.iter_rows():
+        if row[4].value == job_index:
+            questions_sheet_title = row[0].value
+            group_list = row[1].value.strip(", ")
+            if not isinstance(group_list, list):
+                group_list = [group_list]
+
+    questions = wb[questions_sheet_title]
+    group_ids = group_ids_by_title(wb, group_list)
+
+    # Send the question and sleep for the time limit
+    for row in questions.iter_rows(min_row=3):
+        if None in [row[1].value, row[2].value]:
+            break
+        send_message_to_ids(bot, group_ids, row[1].value)
+        time.sleep(float(row[2].value) * 60)
+    send_message_to_ids(bot, group_ids, message="time's up!")
+
+    # Delete the schedule from the database
+    for row in schedule.iter_rows():
+        if row[4].value == job_index:
+            schedule.delete_rows(row[0].row)
+    wb.save(filename="custom/excel_sheet.xlsx")
