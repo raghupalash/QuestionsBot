@@ -109,7 +109,8 @@ def fill_database(wb_main, wb_attendance, context):
         group_string,
         context.user_data["date"],
         context.user_data["time"],
-        job_count
+        job_count,
+        context.user_data["job_type"],
     ]
     schedule.append(data)
     wb_main.save(filename="custom/excel_sheet.xlsx")
@@ -189,7 +190,12 @@ def in_run_time(wb, date_time):
         # Instead of bool, this function can return what schedule it's currently running.
         if create_datetime(row, 2, 3) < date_time:
             schedule_list.append(
-                {"sheet":row[0].value, "groups":row[1].value, "date":row[2].value, "time":row[3].value}
+                {
+                    "schedule_number": row[0].row,
+                    "sheet":row[0].value, "groups":row[1].value, 
+                    "date":row[2].value, "time":row[3].value,
+                    "cache_question":row[6].value
+                }
             )
     if len(schedule_list) == 1:
         return schedule_list[0]
@@ -275,11 +281,15 @@ def get_question_number(question_sheet, question):
             continue
         if row[1].value == question:
             return str(row[0].value)
+    return None
 
-def test(context: CallbackContext):
+def get_question_from_number(question_sheet, number):
+    for row in question_sheet.iter_rows(min_row=3):
+        if row[0].value == number:
+            return row[1].value
+
+def test_auto(context: CallbackContext):
     # Runs the full list of questions according to time
-    # Then checks the history and sees who answered at the right times
-    # Makes a report and send it to the group admin
     # Deletes the row from the sheet.
     job = context.job
     bot = context.bot
@@ -310,3 +320,29 @@ def test(context: CallbackContext):
         if row[4].value == job_index:
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
+
+def test_manual(context: CallbackContext):
+    # Just posts the first question and initialises the question index.
+    job = context.job
+    bot = context.bot
+    job_index = job.context
+    wb = load_workbook("custom/excel_sheet.xlsx")
+    schedule = wb["Schedule"]
+    for row in schedule.iter_rows():
+        if row[4].value == job_index:
+            schedule_id = row[0].row
+            questions_sheet_title = row[0].value
+            group_list = row[1].value.strip(", ")
+            if not isinstance(group_list, list):
+                group_list = [group_list]
+    
+    questions = wb[questions_sheet_title]
+    group_ids = group_ids_by_title(wb, group_list)
+
+    # Send the first question and update the cache.
+    print(schedule_id)
+    send_message_to_ids(bot, group_ids, questions[3][1].value)
+    wb["Schedule"][f"G{schedule_id}"] = 0
+    wb.save(filename="custom/excel_sheet.xlsx")
+    
+    # Right now let's believe that manual testing can happen for only one group (we'll put check for them)

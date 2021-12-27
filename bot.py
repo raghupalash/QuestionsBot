@@ -16,7 +16,9 @@ from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
 from telegram.inline.inlinekeyboardmarkup import InlineKeyboardMarkup
 from utils import (
     TIMEZONE,
-    test,
+    get_question_from_number,
+    test_auto,
+    test_manual,
     check_admin,
     show_sheets, 
     show_groups, 
@@ -45,7 +47,7 @@ logging.basicConfig(
 
 TIMEZONE = timezone
   
-ONE, TWO, THREE = range(3)
+ONE, TWO, THREE, FOUR = range(4)
 
 
 def add_sheet_options(update, context):
@@ -107,8 +109,10 @@ def start(update: Update, context:CallbackContext):
     wb = open_workbook(update, context)
     if not wb:
         return ConversationHandler.END
-    show_sheets(wb, update, context)
+    show_workbooks(wb, update, context)
     return ONE
+
+def sheets(update)
 
 def groups(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -124,20 +128,37 @@ def groups(update: Update, context: CallbackContext):
             context.user_data["groups"].append(data[1])
     else:
         # User pressed "done"
-        query.edit_message_text(text="Write the date you want to post questions (in YYYY-MM-DD format):") # Not a good design
+        keyboard = [
+            [InlineKeyboardButton("Automatic", callback_data="job_automatic")],
+            [InlineKeyboardButton("Manual", callback_data="job_manual")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.edit_message_text(
+            text="Select the job type:",
+            reply_markup=reply_markup
+        ) # Not a good design
         return TWO
 
     wb = open_workbook(update, context)
     if not wb:
         return ConversationHandler.END
     show_groups(wb, query, update, context)
+
+def job_type(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    data = query.data.split("_")
+    context.user_data["job_type"] = data[1]
+    query.edit_message_text(text="Write the date you want to post questions (in YYYY-MM-DD format):") # Not a good design
+    return THREE
+
     
 def schedule_date(update: Update, context: CallbackContext):
     date = validate_date(update, context)
     if not date:
-        return TWO
+        return THREE
     context.user_data["date"] = date
-    return THREE
+    return FOUR
 
 def schedule_time(update: Update, context: CallbackContext):
     time = validate_time(update, context)
@@ -181,7 +202,10 @@ def set_jobs(update: Update, context: CallbackContext):
     sheet = open_workbook(update, context)["Schedule"]
     for row in sheet.iter_rows():
         time = create_datetime(row, 2, 3)
-        context.job_queue.run_once(test, time, context=row[4].value, name=f"job{row[0].row}")
+        if context.user_data["job_type"] == "automatic":
+            context.job_queue.run_once(test_auto, time, context=row[4].value, name=f"job{row[0].row}")
+        else:
+            context.job_queue.run_once(test_manual, time, context=row[4].value, name=f"job{row[0].row}")
     update.message.reply_text("You are all set!!! The questions are scheduled to run at the date and time you have chosen.")
 
 def handle_user_responses(update: Update, context:CallbackContext):
@@ -226,6 +250,50 @@ def handle_user_responses(update: Update, context:CallbackContext):
 
     wb_attendance.save(filename="custom/attendance_sheet.xlsx")
 
+def send_next_question(update, context):
+    # Check if this is a group and if the command is being sent by a group admin.
+    if update.message.chat.type != "group":
+        context.bot.send_message("Use this command in a group where schedule is running.")
+        return
+    if not check_if_group_admin(update, context.bot):
+        update.message.reply_text("Only admins allowed to use this method.")
+        return
+
+    wb = open_workbook(update, context)
+    # Check if we are in a running schedule for this group.
+    date_time = datetime.datetime.now(pytz.timezone(TIMEZONE))
+    schedule = in_run_time(wb, date_time) # Operates on the understanding that one schedule run at a time.
+    if not schedule:
+        return
+
+    # Get the cached question number. (on 4th col we have manual/auto and 5th we have the question cache.)
+    # Also increase the value in the cache
+    question_number = schedule["cache_question"] + 1
+    question = get_question_from_number(wb[schedule["sheet"]], question_number)
+    if not question:
+        # End of schedule.
+        context.bot.send_message(chat_id=update.effective_chat.id, text="time's up!")
+
+        # Delete the schedule from the database
+        wb["Schedule"].delete_rows(schedule["schedule_number"])
+        wb.save(filename="custom/excel_sheet.xlsx")
+        return
+    wb["Schedule"][f"G{schedule['schedule_number']}"] = question_number
+    wb.save(filename="custom/excel_sheet.xlsx")
+    
+    # Send the next question.
+    context.bot.send_message(chat_id=update.effective_chat.id, text=question)
+    
+    
+    
+def check_if_group_admin(update, bot):
+    admin_objects = bot.get_chat_administrators(update.message.chat.id)
+    current_user_id = update.message.from_user.id
+    for admin in admin_objects:
+        if current_user_id == admin.user.id:
+            return True
+    return False
+
 
 def group_and_report_column(groups):
     # Takes a list of groups combined with column to be edited and returns a dict.
@@ -248,6 +316,7 @@ def help(update, context):
     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 def main():
+    print("Hello World!")
     wb_token = load_workbook("custom/token.xlsx")
     token = wb_token.active["A1"].value
     global ADMIN_ID
@@ -264,8 +333,9 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             ONE: [CallbackQueryHandler(groups)],
-            TWO: [MessageHandler(Filters.text, schedule_date)],
-            THREE: [MessageHandler(Filters.text, schedule_time)],
+            TWO: [CallbackQueryHandler(job_type)],
+            THREE: [MessageHandler(Filters.text, schedule_date)],
+            FOUR: [MessageHandler(Filters.text, schedule_time)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
@@ -279,6 +349,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dispatcher.add_handler(CommandHandler("start_admin", start_admin))
+    dispatcher.add_handler(CommandHandler("next", send_next_question))
     dispatcher.add_handler(document_handler)
     dispatcher.add_handler(CommandHandler("add", add_group))
     dispatcher.add_handler(CommandHandler("set", set_jobs))
