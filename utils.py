@@ -5,6 +5,7 @@ from credentials import timezone
 import datetime
 import pytz
 import time
+import os
 
 ADMIN_ID = load_workbook("custom/token.xlsx").active["A2"].value
 TIMEZONE = timezone
@@ -18,15 +19,17 @@ def open_workbook(update, context):
         return None
     return wb
 
-def show_sheets(wb, update, context):
+def show_workbooks(wb, update, context):
+    # Find all sheet names
+    workbooks = os.listdir("C://Users//singh//OneDrive//Desktop//Telegram bots//Questions_Bot//custom//Question")
     keyboard = []
-    for sheet in wb.worksheets:
-        if sheet.title not in ["Schedule", "Groups", "count"]:
-            keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
+    for item in workbooks:
+        filename = item.split(".")[0]
+        keyboard.append([InlineKeyboardButton(filename, callback_data=f"{item}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text="Choose the sheet you want to post questions from:",
+        text="Choose the spreadsheet you want to post questions from:",
         reply_markup=reply_markup,
     )
     return
@@ -111,6 +114,8 @@ def fill_database(wb_main, wb_attendance, context):
         context.user_data["time"],
         job_count,
         context.user_data["job_type"],
+        3, # question row counter
+        context.user_data["workbook"],
     ]
     schedule.append(data)
     wb_main.save(filename="custom/excel_sheet.xlsx")
@@ -194,7 +199,8 @@ def in_run_time(wb, date_time):
                     "schedule_number": row[0].row,
                     "sheet":row[0].value, "groups":row[1].value, 
                     "date":row[2].value, "time":row[3].value,
-                    "cache_question":row[6].value
+                    "cache_question":row[6].value,
+                    "workbook":row[7].value,
                 }
             )
     if len(schedule_list) == 1:
@@ -217,49 +223,49 @@ def collect_garbage():
             schedule.delete_rows(row[0].row)
     wb.save(filename="custom/excel_sheet.xlsx")
 
-def send_report(wb, context, chat_history, questions, group_ids, session_start):
-    # Makes and sends reports
-    report = {}
-    for group_id in group_ids:
-        report[group_id] = {}
-        for row_history in chat_history.iter_rows():
-            if row_history[2].value == group_id:
-                user_id = row_history[3].value
-                time_limit = session_start # Initialize time limit for questions
-                for row_question in questions.iter_rows(min_row=3):
-                    question = row_question[0].value
-                    response_time = create_datetime(row_history, 0, 1)
-                    report[group_id]["session_datetime"] = response_time
-                    if not report[group_id].get("response"):
-                        report[group_id]["response"] = {}
-                    time_limit += datetime.timedelta(minutes=row_question[2].value)
-                    if session_start < response_time <= time_limit:
-                        if report[group_id]["response"].get(user_id):
-                            report[group_id]["response"][user_id].append(question)
-                        else:
-                            report[group_id]["response"][user_id] = [question]
-                        break # Don't want to iterate through next questions
-    create_and_send_msg(wb,context, report)
+# def send_report(wb, context, chat_history, questions, group_ids, session_start):
+#     # Makes and sends reports
+#     report = {}
+#     for group_id in group_ids:
+#         report[group_id] = {}
+#         for row_history in chat_history.iter_rows():
+#             if row_history[2].value == group_id:
+#                 user_id = row_history[3].value
+#                 time_limit = session_start # Initialize time limit for questions
+#                 for row_question in questions.iter_rows(min_row=3):
+#                     question = row_question[0].value
+#                     response_time = create_datetime(row_history, 0, 1)
+#                     report[group_id]["session_datetime"] = response_time
+#                     if not report[group_id].get("response"):
+#                         report[group_id]["response"] = {}
+#                     time_limit += datetime.timedelta(minutes=row_question[2].value)
+#                     if session_start < response_time <= time_limit:
+#                         if report[group_id]["response"].get(user_id):
+#                             report[group_id]["response"][user_id].append(question)
+#                         else:
+#                             report[group_id]["response"][user_id] = [question]
+#                         break # Don't want to iterate through next questions
+#     create_and_send_msg(wb,context, report)
 
-def create_and_send_msg(wb, context, report):
-    for group in report:
-        message = f"{get_group_name_by_id(wb, group)}\n"
-        date, time = extract_datetime(report[group]["session_datetime"])
-        message += f"{date} {time}\n\n"
-        for user in report[group]["response"]:
-            # user is user_id
-            message += f"{get_user_name(context, group, user)}: "
-            question_list = report[group]["response"][user]
-            message += ", ".join(set([str(x) for x in question_list])) + "\n"
+# def create_and_send_msg(wb, context, report):
+#     for group in report:
+#         message = f"{get_group_name_by_id(wb, group)}\n"
+#         date, time = extract_datetime(report[group]["session_datetime"])
+#         message += f"{date} {time}\n\n"
+#         for user in report[group]["response"]:
+#             # user is user_id
+#             message += f"{get_user_name(context, group, user)}: "
+#             question_list = report[group]["response"][user]
+#             message += ", ".join(set([str(x) for x in question_list])) + "\n"
             
-        # group is group_id
-        admins = context.bot.get_chat_administrators(group)
-        # WRITE HTML WHILE SENDING
-        for admin in admins:
-            try:
-                context.bot.send_message(chat_id=admin.user.id, text=message, parse_mode=ParseMode.HTML)
-            except:
-                continue
+#         # group is group_id
+#         admins = context.bot.get_chat_administrators(group)
+#         # WRITE HTML WHILE SENDING
+#         for admin in admins:
+#             try:
+#                 context.bot.send_message(chat_id=admin.user.id, text=message, parse_mode=ParseMode.HTML)
+#             except:
+#                 continue
 
 def get_user_name(context, group_id, user_id):
     user = context.bot.get_chat_member(chat_id=group_id, user_id=user_id).user
@@ -280,12 +286,12 @@ def get_question_number(question_sheet, question):
         if row[0].value == 0:
             continue
         if row[1].value == question:
-            return str(row[0].value)
+            return str(int(float(row[0].value)))
     return None
 
 def get_question_from_number(question_sheet, number):
     for row in question_sheet.iter_rows(min_row=3):
-        if row[0].value == number:
+        if row[0].row == number:
             return row[1].value
 
 def test_auto(context: CallbackContext):
@@ -299,12 +305,14 @@ def test_auto(context: CallbackContext):
     schedule = wb["Schedule"]
     for row in schedule.iter_rows():
         if row[4].value == job_index:
+            question_workbook = row[7].value
             questions_sheet_title = row[0].value
             group_list = row[1].value.strip(", ")
             if not isinstance(group_list, list):
                 group_list = [group_list]
-
-    questions = wb[questions_sheet_title]
+    
+    wb_question = load_workbook(f"custom/Question/{question_workbook}")
+    questions = wb_question[questions_sheet_title]
     group_ids = group_ids_by_title(wb, group_list)
 
     # Send the question and sleep for the time limit
@@ -331,18 +339,27 @@ def test_manual(context: CallbackContext):
     for row in schedule.iter_rows():
         if row[4].value == job_index:
             schedule_id = row[0].row
+            question_workbook = row[7].value
             questions_sheet_title = row[0].value
             group_list = row[1].value.strip(", ")
             if not isinstance(group_list, list):
                 group_list = [group_list]
     
-    questions = wb[questions_sheet_title]
+    wb_question = load_workbook(f"custom/Question/{question_workbook}")
+    questions = wb_question[questions_sheet_title]
     group_ids = group_ids_by_title(wb, group_list)
 
     # Send the first question and update the cache.
-    print(schedule_id)
     send_message_to_ids(bot, group_ids, questions[3][1].value)
-    wb["Schedule"][f"G{schedule_id}"] = 0
+    wb["Schedule"][f"G{schedule_id}"] = 3
     wb.save(filename="custom/excel_sheet.xlsx")
     
-    # Right now let's believe that manual testing can happen for only one group (we'll put check for them)
+# new change
+def check_if_question_already_exists(string, question):
+    # Checks if the number already exists in a string
+    str_nums = string.split(", ")
+    print(string)
+    print(question)
+    if question in str_nums:
+        return True
+    return False

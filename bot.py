@@ -1,5 +1,6 @@
 # We are going to use this file for main bot logic and holding data.
 # For sending messages and storing data, we will use utils.py
+from openpyxl.workbook import workbook
 from telegram import Update
 from telegram.ext import (
     Updater, 
@@ -16,22 +17,20 @@ from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
 from telegram.inline.inlinekeyboardmarkup import InlineKeyboardMarkup
 from utils import (
     TIMEZONE,
+    check_if_question_already_exists, # new change
     get_question_from_number,
     test_auto,
     test_manual,
     check_admin,
-    show_sheets, 
+    show_workbooks, 
     show_groups, 
     open_workbook, 
     validate_date, 
     validate_time, 
     save_data, 
     create_datetime,
-    group_ids_by_title,
-    send_message_to_ids,
     in_run_time,
     collect_garbage,
-    send_report,
     get_question_number
 )
 from credentials import timezone
@@ -47,7 +46,7 @@ logging.basicConfig(
 
 TIMEZONE = timezone
   
-ONE, TWO, THREE, FOUR = range(4)
+ONE, TWO, THREE, FOUR, FIVE = range(5)
 
 
 def add_sheet_options(update, context):
@@ -67,7 +66,7 @@ def ask_for_sheet(update, context):
     query = update.callback_query
     query.answer()
     context.user_data["sheet_type"] = query.data
-    message = "Alright, send me the sheet:"
+    message = f"Alright, send me the {query.data.split('_')[0]} sheet:"
     query.edit_message_text(text=message)
     return TWO
 
@@ -77,11 +76,12 @@ def incoming_document(update, context):
     if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
         # writing to a custom file
         if context.user_data["sheet_type"] == "question_sheet":
-            file_location = "custom/excel_sheet.xlsx"
+            file_location = f"custom/Question/{document.file_name}"
         else:
             file_location = f"custom/attendance_sheet.xlsx"
         with open(file_location, 'wb') as f:
-            context.bot.get_file(update.message.document).download(out=f)
+            file = context.bot.get_file(update.message.document)
+            file.download(out=f)
         
         context.bot.send_message(chat_id=update.effective_chat.id, 
             text="Sheet uploaded, press /start to view sheets from.")
@@ -112,7 +112,23 @@ def start(update: Update, context:CallbackContext):
     show_workbooks(wb, update, context)
     return ONE
 
-def sheets(update)
+def sheets(update, context):
+    query = update.callback_query
+    query.answer()
+
+    workbook = query.data
+    context.user_data["workbook"] = workbook
+    wb = load_workbook(f"custom/Question/{workbook}")
+    keyboard = []
+    for sheet in wb.worksheets:
+        if sheet.title not in ["Schedule", "Groups", "count"]:
+            keyboard.append([InlineKeyboardButton(str(sheet.title), callback_data=f"sheet_{sheet.title}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    query.edit_message_text(
+        text="Choose the sheet you want to post questions from:",
+        reply_markup=reply_markup,
+    )
+    return TWO
 
 def groups(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -137,7 +153,7 @@ def groups(update: Update, context: CallbackContext):
             text="Select the job type:",
             reply_markup=reply_markup
         ) # Not a good design
-        return TWO
+        return THREE
 
     wb = open_workbook(update, context)
     if not wb:
@@ -150,20 +166,20 @@ def job_type(update: Update, context: CallbackContext):
     data = query.data.split("_")
     context.user_data["job_type"] = data[1]
     query.edit_message_text(text="Write the date you want to post questions (in YYYY-MM-DD format):") # Not a good design
-    return THREE
+    return FOUR
 
     
 def schedule_date(update: Update, context: CallbackContext):
     date = validate_date(update, context)
     if not date:
-        return THREE
+        return FOUR
     context.user_data["date"] = date
-    return FOUR
+    return FIVE
 
 def schedule_time(update: Update, context: CallbackContext):
     time = validate_time(update, context)
     if not time:
-        return THREE
+        return FIVE
     context.user_data["time"] = time
     save_data(update, context)
     return ConversationHandler.END
@@ -209,14 +225,17 @@ def set_jobs(update: Update, context: CallbackContext):
     update.message.reply_text("You are all set!!! The questions are scheduled to run at the date and time you have chosen.")
 
 def handle_user_responses(update: Update, context:CallbackContext):
-    if update.message.chat.type != "group":
+    message = update.message
+    if not message:
+        message = update.edited_message
+    if message.chat.type != "group":
         return
     # Check if message is a reply to another message.
-    reply_to = update.message.reply_to_message
+    reply_to = message.reply_to_message
     if not reply_to:
         return
 
-    current_group = update.message.chat.title
+    current_group = message.chat.title
     wb_main = load_workbook("custom/excel_sheet.xlsx")
     wb_attendance = load_workbook("custom/attendance_sheet.xlsx")
     attendance_sheet = wb_attendance[current_group]
@@ -227,7 +246,8 @@ def handle_user_responses(update: Update, context:CallbackContext):
     if not schedule:
         return
 
-    question_sheet = wb_main[schedule["sheet"]]
+    wb_question = load_workbook(f"custom/Question/{schedule['workbook']}")
+    question_sheet = wb_question[schedule["sheet"]]
     question_number = get_question_number(question_sheet, reply_to.text)
     if not question_number:
         return
@@ -240,13 +260,17 @@ def handle_user_responses(update: Update, context:CallbackContext):
     # Add these questions in attendance sheet.
     # Here we operate on the understanding that the schedule is deleted after it has been executed.
     for row in attendance_sheet.iter_rows(min_row=2):
-        if row[0].value == update.message.from_user.username:
+        if row[0].value == message.from_user.username:
             stored = row[column_answered - 1].value # A string like 1, 2, 3, 4 or None
+            question_count = 0
             if not stored:
                 attendance_sheet.cell(row=row[0].row, column=column_answered, value=question_number)
+                question_count = 1
             else:
-                attendance_sheet.cell(row=row[0].row, column=column_answered, value=", ".join([str(stored), question_number]))
-            attendance_sheet.cell(row=row[0].row, column=column_QA, value=str(int(row[column_QA - 1].value) + 1))
+                if not check_if_question_already_exists(stored, question_number):
+                    attendance_sheet.cell(row=row[0].row, column=column_answered, value=", ".join([str(stored), question_number]))
+                    question_count = 1
+            attendance_sheet.cell(row=row[0].row, column=column_QA, value=str(int(row[column_QA - 1].value) + question_count))
 
     wb_attendance.save(filename="custom/attendance_sheet.xlsx")
 
@@ -269,7 +293,8 @@ def send_next_question(update, context):
     # Get the cached question number. (on 4th col we have manual/auto and 5th we have the question cache.)
     # Also increase the value in the cache
     question_number = schedule["cache_question"] + 1
-    question = get_question_from_number(wb[schedule["sheet"]], question_number)
+    wb_question = load_workbook(f'custom/Question/{schedule["workbook"]}')
+    question = get_question_from_number(wb_question[schedule["sheet"]], question_number)
     if not question:
         # End of schedule.
         context.bot.send_message(chat_id=update.effective_chat.id, text="time's up!")
@@ -332,10 +357,11 @@ def main():
     start_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            ONE: [CallbackQueryHandler(groups)],
-            TWO: [CallbackQueryHandler(job_type)],
-            THREE: [MessageHandler(Filters.text, schedule_date)],
-            FOUR: [MessageHandler(Filters.text, schedule_time)],
+            ONE: [CallbackQueryHandler(sheets)],
+            TWO: [CallbackQueryHandler(groups)],
+            THREE: [CallbackQueryHandler(job_type)],
+            FOUR: [MessageHandler(Filters.text, schedule_date)],
+            FIVE: [MessageHandler(Filters.text, schedule_time)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )

@@ -1,5 +1,5 @@
 from openpyxl import load_workbook
-from utils import TIMEZONE, create_datetime, fill_database, open_workbook, show_sheets, test_auto, test_manual
+from utils import TIMEZONE, create_datetime, fill_database, open_workbook, test_auto, test_manual
 from telegram.ext import ConversationHandler
 from datetime import datetime, timedelta
 from credentials import timezone
@@ -16,6 +16,7 @@ make a schedule for a given sheet, given group, time = time.now() + 10 seconds. 
 def start_admin(update, context):
     # Upload a new worksheet
     # Load worksheet
+    context.user_data["workbook"] = "my_questions.xlsx"
     context.user_data["sheet"] = "Basketball"
     context.user_data["groups"] = ["okokokok"]
     context.user_data["date"] = datetime.today().strftime('%Y-%m-%d')
